@@ -1,0 +1,386 @@
+<!doctype html>
+<html lang="ko" data-theme="dark">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>{% if company %}{{ company.name }} — {% endif %}협력사 과제 관리</title>
+<link rel="icon" type="image/svg+xml" href="/static/favicon.svg">
+<script>
+  try { document.documentElement.dataset.theme = localStorage.getItem("theme") || "dark"; } catch (e) {}
+</script>
+<link rel="stylesheet" href="/static/app.css">
+</head>
+<body>
+<div class="layout">
+  <aside class="sidebar">
+    <div class="sidebar-head">
+      <span class="brand">{{ icon('clipboard-list', 18) }} 협력사 과제 관리</span>
+    </div>
+    <button type="button" class="btn btn-primary btn-block" data-action="company-new">{{ icon('plus') }} 협력사 추가</button>
+    <nav class="company-list" aria-label="협력사">
+      {% for c in companies %}
+      <div class="company-item {% if company and c.id == company.id %}selected{% endif %}">
+        <a href="/c/{{ c.id }}" class="company-link">
+          <span class="company-name">{{ c.name }}</span>
+          <span class="company-meta">{{ c.count }}{% if c.delayed %} · <span class="text-danger">지연 {{ c.delayed }}</span>{% endif %}</span>
+        </a>
+        <button type="button" class="icon-btn" data-action="company-edit" data-id="{{ c.id }}" aria-label="{{ c.name }} 수정" title="수정">{{ icon('pencil', 14) }}</button>
+      </div>
+      {% else %}
+      <p class="muted small">등록된 협력사가 없습니다.</p>
+      {% endfor %}
+    </nav>
+  </aside>
+
+  <main class="main">
+    <header class="topbar" id="topbar">
+      <div class="topbar-title">
+        {% if company %}
+        <h1>{{ company.name }}</h1>
+        <span class="muted small">{{ company.field or '' }}{% if company.consultant %} · {{ company.consultant }}{% endif %}{% if company.start_date or company.end_date %} · {{ company.start_date or '' }} ~ {{ company.end_date or '' }}{% endif %}</span>
+        {% else %}
+        <h1>협력사를 추가하세요</h1>
+        {% endif %}
+      </div>
+      <div class="topbar-actions">
+        {% if company %}
+        <button type="button" class="btn" data-action="note-open">{{ icon('notebook-pen') }} 주간 보고 입력</button>
+        <button type="button" class="btn" data-action="report-open">{{ icon('file-spreadsheet') }} 보고서 다운로드</button>
+        {% endif %}
+        <button type="button" class="btn" data-action="backup">{{ icon('database-backup') }} 백업</button>
+        <button type="button" class="icon-btn theme-toggle" data-action="theme" aria-label="밝은/어두운 화면 전환" title="밝은/어두운 화면 전환">
+          <span class="when-dark">{{ icon('sun') }}</span><span class="when-light">{{ icon('moon') }}</span>
+        </button>
+      </div>
+    </header>
+
+    {% if company %}
+    <section class="cards" aria-label="과제 현황">
+      <a class="card {% if not filtered %}card-active{% endif %}" href="{{ url(q='', category='', task_type='', status='', owner='', flag='') }}">
+        <span class="card-label">총 과제</span>
+        <span class="card-value">{{ stats.total }}</span>
+        <span class="card-sub">대기 {{ stats.waiting }} · 보류 {{ stats.on_hold }}</span>
+      </a>
+      <a class="card {% if args.status == '진행중' %}card-active{% endif %}" href="{{ url(status='진행중', flag='') }}">
+        <span class="card-label">진행중</span>
+        <span class="card-value">{{ stats.in_progress }}</span>
+        <span class="card-sub">/ {{ stats.total }}건</span>
+      </a>
+      <a class="card {% if args.status == '완료' %}card-active{% endif %}" href="{{ url(status='완료', flag='') }}">
+        <span class="card-label">완료</span>
+        <span class="card-value">{{ stats.done }}</span>
+        <span class="card-sub">{{ stats.done }} / {{ stats.total }}건 · {{ (stats.done_rate * 100) | round | int }}%</span>
+      </a>
+      <div class="card">
+        <span class="card-label">전체 진행률</span>
+        <span class="card-value">{{ stats.avg_progress | round | int }}%</span>
+        <span class="bar"><span style="width: {{ stats.avg_progress | round(1) }}%"></span></span>
+        <span class="card-sub">평균 진척률 · 완료율 {{ (stats.done_rate * 100) | round | int }}%</span>
+      </div>
+      <div class="card card-split">
+        <span class="card-label">이슈 (지연)</span>
+        <span class="card-value">
+          <a href="{{ url(flag='delayed', status='') }}" class="{% if stats.delayed %}text-danger{% endif %} {% if args.flag == 'delayed' %}underline{% endif %}">지연 {{ stats.delayed }}</a>
+          <span class="muted">·</span>
+          <a href="{{ url(flag='issue', status='') }}" class="{% if stats.issues %}text-warning{% endif %} {% if args.flag == 'issue' %}underline{% endif %}">이슈 {{ stats.issues }}</a>
+        </span>
+        {% if stats.no_due %}<a class="card-sub" href="{{ url(flag='no_due', status='') }}">예정일 미입력 {{ stats.no_due }}건</a>{% else %}<span class="card-sub">미완료 과제 기준</span>{% endif %}
+      </div>
+    </section>
+    {% if stats.by_category %}
+    <p class="cat-progress" aria-label="팀별 진행률">
+      <span class="cat-progress-label">팀별 진행률</span>
+      {% for g in stats.by_category %}{% if not loop.first %}<span class="muted" aria-hidden="true">·</span>{% endif %}
+      <a href="{{ url(category=g.name) }}" title="{{ g.name }} {{ g.count }}건 평균 진척률" class="{% if args.category == g.name %}cat-active{% endif %}">{{ g.name }} <b>{{ g.avg | round | int }}%</b></a>
+      {% endfor %}
+    </p>
+    {% endif %}
+
+    <section class="list" aria-label="과제 목록">
+      <form class="filter-bar form-row" id="filter-form" method="get" action="/c/{{ company.id }}">
+        <label class="field field-grow">
+          <span>검색</span>
+          <input type="search" name="q" value="{{ args.q }}" placeholder="과제명·담당자·구분">
+        </label>
+        {% for key, label in (('category', '구분'), ('task_type', '유형'), ('status', '상태'), ('owner', '담당자')) %}
+        <label class="field">
+          <span>{{ label }}</span>
+          <select name="{{ key }}" data-autosubmit>
+            <option value="">전체</option>
+            {% for v in options[key] %}<option value="{{ v }}" {% if args[key] == v %}selected{% endif %}>{{ v }}</option>{% endfor %}
+          </select>
+        </label>
+        {% endfor %}
+        {% if args.flag %}<input type="hidden" name="flag" value="{{ args.flag }}">{% endif %}
+        {% if args.sort %}<input type="hidden" name="sort" value="{{ args.sort }}"><input type="hidden" name="dir" value="{{ args.dir }}">{% endif %}
+        <button type="submit" class="btn">{{ icon('search') }} 조회</button>
+        <div class="filter-info small">
+          <span>{% if total_rows %}{{ range_from }}–{{ range_to }} / {{ total_rows }}건{% else %}0건{% endif %}{% if filtered %} · 전체 {{ all_rows }}건 중{% endif %}</span>
+          {% if args.flag %}<span class="tag tag-{{ 'danger' if args.flag == 'delayed' else 'warning' }}">{{ flags[args.flag] }}만</span>{% endif %}
+          {% if filtered %}<a href="{{ url(q='', category='', task_type='', status='', owner='', flag='') }}">필터 초기화</a>{% endif %}
+          {% if sorted %}<a href="{{ url(sort='', dir='') }}">기본 정렬로 되돌리기</a>{% endif %}
+          <span class="push-right btn-group">
+            <button type="button" class="btn" data-action="form-open">{{ icon('download') }} 진행사항 양식</button>
+            <button type="button" class="btn" data-action="upload-open">{{ icon('upload') }} 진행사항 업로드</button>
+            <button type="button" class="btn btn-primary" data-action="task-new">{{ icon('plus') }} 과제 등록</button>
+          </span>
+        </div>
+      </form>
+
+      <table class="table">
+        <thead>
+          <tr>
+            {% for key, label, cls in (('no','NO','col-no'), ('category','구분','col-cat'), ('task_type','유형','col-type'), ('title','과제명','col-title'), ('owner','담당자','col-owner'), ('status','상태','col-status'), ('progress','진척률','col-progress'), ('effect','개선효과','col-effect'), ('due_date','완료 예정일','col-date'), ('done_date','완료일','col-date col-done')) %}
+            {% set active = sort == key %}
+            <th class="{{ cls }}" {% if active %}aria-sort="{{ 'descending' if desc else 'ascending' }}"{% endif %}>
+              <a href="{{ url(sort=key, dir=('asc' if active and desc else ('desc' if active else 'asc'))) }}" class="sort {% if active %}sort-active{% endif %}">
+                {{ label }}<span class="sort-mark">{% if active %}{{ '▼' if desc else '▲' }}{% else %}⇅{% endif %}</span>
+              </a>
+            </th>
+            {% endfor %}
+          </tr>
+        </thead>
+        <tbody>
+          {% for t in rows %}
+          <tr>
+            <td class="col-no num">{{ t.no }}</td>
+            <td class="col-cat">{{ t.category or '' }}</td>
+            <td class="col-type">{{ t.task_type or '' }}</td>
+            <td class="col-title">
+              <button type="button" class="link-btn" data-action="task-open" data-id="{{ t.id }}">{{ t.title }}</button>
+              {% if t.delayed %}<span class="tag tag-danger">지연</span>{% endif %}
+              {% if t.has_issue %}<span class="tag tag-warning" title="{{ t.issue }}">이슈</span>{% endif %}
+            </td>
+            <td class="col-owner">{{ t.owner or '' }}</td>
+            <td class="col-status"><span class="status status-{{ t.status }}">{{ t.status }}</span></td>
+            <td class="col-progress">
+              <span class="progress"><span class="bar"><span style="width: {{ t.progress }}%"></span></span><span class="num">{{ t.progress }}%</span></span>
+            </td>
+            <td class="col-effect">{{ t.effect or '' }}</td>
+            <td class="col-date num">{{ t.due_date or '' }}</td>
+            <td class="col-date col-done num">{{ t.done_date or '' }}</td>
+          </tr>
+          {% else %}
+          <tr><td colspan="10" class="empty">조건에 맞는 과제가 없습니다.</td></tr>
+          {% endfor %}
+        </tbody>
+      </table>
+
+      {% if pages > 1 %}
+      <nav class="pager" aria-label="페이지">
+        {% if page > 1 %}<a href="{{ url(page=page - 1) }}" aria-label="이전 페이지">{{ icon('chevron-left') }}</a>{% endif %}
+        {% for p in range(1, pages + 1) %}
+        <a href="{{ url(page=p) }}" class="{% if p == page %}current{% endif %}" {% if p == page %}aria-current="page"{% endif %}>{{ p }}</a>
+        {% endfor %}
+        {% if page < pages %}<a href="{{ url(page=page + 1) }}" aria-label="다음 페이지">{{ icon('chevron-right') }}</a>{% endif %}
+      </nav>
+      {% endif %}
+    </section>
+    {% else %}
+    <section class="empty-state">
+      <p>왼쪽의 「협력사 추가」로 첫 협력사를 등록하세요.</p>
+    </section>
+    {% endif %}
+  </main>
+</div>
+
+{# ---------- company modal ---------- #}
+<dialog class="modal modal-sm" id="company-modal" aria-labelledby="company-modal-title">
+  <form method="dialog" class="modal-body" id="company-form" novalidate>
+    <header class="modal-head"><h2 id="company-modal-title">협력사</h2>
+      <button type="button" class="icon-btn" data-close aria-label="닫기">{{ icon('x') }}</button></header>
+    <div class="modal-content grid-2">
+      <label class="field span-2"><span>회사명 *</span><input name="name" required></label>
+      <label class="field"><span>컨설팅 분야</span><input name="field" placeholder="AX"></label>
+      <label class="field"><span>담당 컨설턴트</span><input name="consultant"></label>
+      <label class="field"><span>컨설팅 시작일</span><input type="date" name="start_date"></label>
+      <label class="field"><span>컨설팅 종료일</span><input type="date" name="end_date"></label>
+      <label class="field span-2"><span>보고서 KPI 표시 방식</span>
+        <select name="kpi_mode"><option value="task">과제별 (과제마다 한 줄)</option><option value="category">구분별 (구분마다 합계, 분/월만 합산)</option></select></label>
+      <p class="form-error span-2" data-error="_"></p>
+    </div>
+    <footer class="modal-foot">
+      <button type="button" class="btn btn-danger-outline" data-action="company-delete">{{ icon('trash-2') }} 삭제</button>
+      <span class="spacer"></span>
+      <button type="button" class="btn" data-close>닫기</button>
+      <button type="submit" class="btn btn-primary">{{ icon('save') }} 저장</button>
+    </footer>
+  </form>
+</dialog>
+
+{# ---------- task modal ---------- #}
+<dialog class="modal modal-lg" id="task-modal" aria-labelledby="task-modal-title">
+  <form method="dialog" class="modal-body" id="task-form" novalidate>
+    <header class="modal-head">
+      <h2 id="task-modal-title">과제</h2>
+      <span class="flash" id="task-flash" role="status"></span>
+      <button type="button" class="icon-btn" data-close aria-label="닫기">{{ icon('x') }}</button>
+    </header>
+    <nav class="tabs" role="tablist">
+      <button type="button" role="tab" data-tab="basic" aria-selected="true">기본정보</button>
+      <button type="button" role="tab" data-tab="perf">성과</button>
+      <button type="button" role="tab" data-tab="extra">추가 정보</button>
+      <button type="button" role="tab" data-tab="logs">진행 이력 (<span id="log-count">0</span>)</button>
+    </nav>
+    <div class="modal-content">
+      <section data-panel="basic" class="grid-4">
+        <label class="field"><span>NO</span><input name="no" readonly tabindex="-1"></label>
+        <label class="field"><span>구분</span><input name="category" list="dl-category"></label>
+        <label class="field"><span>세부구분</span><input name="sub_category"></label>
+        <label class="field"><span>유형</span><select name="task_type"><option value="">-</option>{% for x in task_types %}<option>{{ x }}</option>{% endfor %}</select></label>
+        <label class="field span-3"><span>과제명 *</span><input name="title" required></label>
+        <label class="field"><span>담당자</span><input name="owner" list="dl-owner"></label>
+        <label class="field"><span>상태</span><select name="status">{% for s in statuses %}<option>{{ s }}</option>{% endfor %}</select></label>
+        <label class="field"><span>진척률 (진행 이력에서 입력)</span><input name="progress_view" readonly tabindex="-1"></label>
+        <label class="field"><span>시작일</span><input type="date" name="start_date"></label>
+        <label class="field"><span>완료 예정일</span><input type="date" name="due_date"></label>
+        <label class="field"><span>실제 완료일 (완료 시)</span><input type="date" name="done_date"></label>
+        <label class="field check"><input type="checkbox" name="is_added"><span>추가과제 (처음 발굴 이후 추가)</span></label>
+        <p class="hint span-4" id="status-hint"></p>
+      </section>
+      <section data-panel="perf" class="grid-4" hidden>
+        <label class="field span-2"><span>개선항목</span><input name="improve_item"></label>
+        <label class="field"><span>단위</span><input name="unit" placeholder="분/월"></label>
+        <label class="field"><span>목표</span><input name="target"></label>
+        <label class="field"><span>개선전</span><input name="before_val"></label>
+        <label class="field"><span>개선후</span><input name="after_val"></label>
+        <label class="field"><span>개선효과</span><input name="effect"></label>
+        <label class="field"><span>개선율</span><input name="rate_view" readonly tabindex="-1"></label>
+        <p class="hint span-4" id="effect-hint"></p>
+      </section>
+      <section data-panel="extra" class="grid-2" hidden>
+        <label class="field"><span>참여 인원</span><input name="participants"></label>
+        <label class="field"><span>금액 효과</span><input name="money_effect"></label>
+        <label class="field"><span>절감시간 (hr/년)</span><input name="saved_hours"></label>
+        <label class="field"><span>절감시간 산정 근거</span><input name="saved_basis"></label>
+        <label class="field span-2"><span>주요 개선 내용 (TO-BE)</span><textarea name="to_be" rows="3"></textarea></label>
+        <label class="field span-2"><span>정성적 효과</span><textarea name="qual_effect" rows="2"></textarea></label>
+        <label class="field span-2"><span>확인 필요 사항</span><textarea name="check_items" rows="2"></textarea></label>
+      </section>
+      <section data-panel="logs" hidden>
+        <div class="log-new" id="log-new">
+          <h3>새 기록</h3>
+          <div class="form-row">
+            <label class="field"><span>주차</span><select name="new_week" id="new-week"></select></label>
+            <label class="field field-narrow"><span>진척률 %</span><input type="number" min="0" max="100" step="1" name="new_progress"></label>
+            <label class="field field-grow"><span>이슈 (있을 때만)</span><input name="new_issue"></label>
+          </div>
+          <label class="field"><span>진행 내용</span><textarea name="new_content" rows="2"></textarea></label>
+          <p class="hint" id="new-week-hint"></p>
+        </div>
+        <p class="hint" id="log-locked" hidden>진행 이력은 과제를 처음 저장한 뒤에 입력할 수 있습니다.</p>
+        <table class="table log-table">
+          <thead><tr><th>주차</th><th>진척률</th><th>진행 내용</th><th>이슈</th><th></th></tr></thead>
+          <tbody id="log-rows"></tbody>
+        </table>
+      </section>
+      <p class="form-error" data-error="_"></p>
+    </div>
+    <footer class="modal-foot">
+      <button type="button" class="btn btn-danger-outline" data-action="task-delete">{{ icon('trash-2') }} 삭제</button>
+      <span class="spacer"></span>
+      <button type="button" class="btn" data-close>닫기</button>
+      <button type="submit" class="btn btn-primary">{{ icon('save') }} 저장</button>
+    </footer>
+  </form>
+</dialog>
+
+{# ---------- weekly note modal ---------- #}
+<dialog class="modal modal-md" id="note-modal" aria-labelledby="note-modal-title">
+  <form method="dialog" class="modal-body" id="note-form" novalidate>
+    <header class="modal-head"><h2 id="note-modal-title">주간 보고 입력</h2>
+      <span class="flash" id="note-flash" role="status"></span>
+      <button type="button" class="icon-btn" data-close aria-label="닫기">{{ icon('x') }}</button></header>
+    <div class="modal-content grid-2">
+      <label class="field"><span>주차</span><select name="week" id="note-week"></select></label>
+      <label class="field"><span>보고일 (금주 내용·파일명 날짜)</span><input type="date" name="report_date"></label>
+      <label class="field span-2"><span>금주 컨설팅 요약</span><textarea name="summary" rows="4" placeholder="- 전체 진행 사항 리뷰"></textarea></label>
+      <label class="field span-2"><span>공통 사항 (금주 내용 첫 줄)</span><input name="common" placeholder="[공통] 전체 과제 진척 사항 리뷰"></label>
+      <label class="field span-2"><span>금주 상세 내용 (선택 — 과제별 진행 내용 위에 붙음)</span><textarea name="detail" rows="3"></textarea></label>
+      <label class="field"><span>차주 방문일</span><input type="date" name="next_visit_date"></label>
+      <label class="field"><span>차주 방문 시간</span><input name="next_visit_time" placeholder="13:00∼15:00"></label>
+      <label class="field span-2"><span>차주 진행계획</span><textarea name="next_plan" rows="3" placeholder=" - 진행 과제 컨설팅 및 지원"></textarea></label>
+      <p class="hint span-2">과제별 금주 내용은 이 주차의 진행 이력에서 자동으로 채워집니다.</p>
+      <p class="form-error span-2" data-error="_"></p>
+    </div>
+    <footer class="modal-foot">
+      <span class="spacer"></span>
+      <button type="button" class="btn" data-close>닫기</button>
+      <button type="submit" class="btn btn-primary">{{ icon('save') }} 저장</button>
+    </footer>
+  </form>
+</dialog>
+
+{# ---------- report modal ---------- #}
+<dialog class="modal modal-sm" id="report-modal" aria-labelledby="report-modal-title">
+  <div class="modal-body">
+    <header class="modal-head"><h2 id="report-modal-title">보고서 다운로드</h2>
+      <button type="button" class="icon-btn" data-close aria-label="닫기">{{ icon('x') }}</button></header>
+    <div class="modal-content">
+      <label class="field"><span>주차 (이 주차까지 누적)</span><select id="report-week"></select></label>
+      <div id="report-info" class="report-info"></div>
+    </div>
+    <footer class="modal-foot">
+      <span class="spacer"></span>
+      <button type="button" class="btn" data-close>닫기</button>
+      <a class="btn btn-primary" id="report-download" href="#">{{ icon('download') }} 다운로드</a>
+    </footer>
+  </div>
+</dialog>
+
+{# ---------- progress form download ---------- #}
+<dialog class="modal modal-sm" id="form-modal" aria-labelledby="form-modal-title">
+  <div class="modal-body">
+    <header class="modal-head"><h2 id="form-modal-title">진행사항 양식 다운로드</h2>
+      <button type="button" class="icon-btn" data-close aria-label="닫기">{{ icon('x') }}</button></header>
+    <div class="modal-content">
+      <label class="field"><span>주차</span><select id="form-week"></select></label>
+      <p class="hint">이 협력사의 과제 목록이 담긴 엑셀입니다. 그 주차에 이미 남긴 기록은 미리 채워집니다.
+        노란 칸(진척률·진행 내용·이슈)을 채운 뒤 「진행사항 업로드」로 올리세요.</p>
+    </div>
+    <footer class="modal-foot">
+      <span class="spacer"></span>
+      <button type="button" class="btn" data-close>닫기</button>
+      <a class="btn btn-primary" id="form-download" href="#">{{ icon('download') }} 다운로드</a>
+    </footer>
+  </div>
+</dialog>
+
+{# ---------- progress upload ---------- #}
+<dialog class="modal modal-md" id="upload-modal" aria-labelledby="upload-modal-title">
+  <div class="modal-body">
+    <header class="modal-head"><h2 id="upload-modal-title">진행사항 업로드</h2>
+      <button type="button" class="icon-btn" data-close aria-label="닫기">{{ icon('x') }}</button></header>
+    <div class="modal-content">
+      <label class="field"><span>작성한 진행사항 양식 (.xlsx)</span>
+        <input type="file" id="upload-file" accept=".xlsx,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"></label>
+      <div id="upload-preview" class="report-info"></div>
+    </div>
+    <footer class="modal-foot">
+      <span class="spacer"></span>
+      <button type="button" class="btn" data-close>닫기</button>
+      <button type="button" class="btn btn-primary" id="upload-apply" disabled>{{ icon('save') }} 반영</button>
+    </footer>
+  </div>
+</dialog>
+
+{# ---------- confirm ---------- #}
+<dialog class="modal modal-sm" id="confirm-modal" aria-labelledby="confirm-title">
+  <div class="modal-body">
+    <header class="modal-head"><h2 id="confirm-title">확인</h2></header>
+    <div class="modal-content"><p id="confirm-text" class="pre"></p></div>
+    <footer class="modal-foot">
+      <span class="spacer"></span>
+      <button type="button" class="btn" id="confirm-no">취소</button>
+      <button type="button" class="btn btn-danger" id="confirm-yes">확인</button>
+    </footer>
+  </div>
+</dialog>
+
+<div class="toast" id="toast" role="status" aria-live="polite"></div>
+<datalist id="dl-category">{% for v in (options.category if company else []) %}<option value="{{ v }}">{% endfor %}</datalist>
+<datalist id="dl-owner">{% for v in (options.owner if company else []) %}<option value="{{ v }}">{% endfor %}</datalist>
+<script id="boot" type="application/json">{{ boot | safe }}</script>
+<script src="/static/app.js"></script>
+</body>
+</html>
